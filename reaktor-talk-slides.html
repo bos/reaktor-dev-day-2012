@@ -1,0 +1,601 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+ "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta http-equiv="Content-Style-Type" content="text/css" />
+  <meta name="generator" content="pandoc" />
+  <title></title>
+  <style type="text/css">
+table.sourceCode, tr.sourceCode, td.lineNumbers, td.sourceCode {
+  margin: 0; padding: 0; vertical-align: baseline; border: none; }
+table.sourceCode { width: 100%; }
+td.lineNumbers { text-align: right; padding-right: 4px; padding-left: 4px; color: #aaaaaa; border-right: 1px solid #aaaaaa; }
+td.sourceCode { padding-left: 5px; }
+code > span.kw { color: #007020; font-weight: bold; }
+code > span.dt { color: #902000; }
+code > span.dv { color: #40a070; }
+code > span.bn { color: #40a070; }
+code > span.fl { color: #40a070; }
+code > span.ch { color: #4070a0; }
+code > span.st { color: #4070a0; }
+code > span.co { color: #60a0b0; font-style: italic; }
+code > span.ot { color: #007020; }
+code > span.al { color: #ff0000; font-weight: bold; }
+code > span.fu { color: #06287e; }
+code > span.er { color: #ff0000; font-weight: bold; }
+  </style>
+  <link rel="stylesheet" type="text/css" media="screen, projection, print"
+    href="http://www.w3.org/Talks/Tools/Slidy2/styles/slidy.css" />
+  <script src="https://d3eoax9i5htok0.cloudfront.net/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" type="text/javascript"></script>
+  <!--
+  <script 
+    type="text/javascript"
+    src="http://localhost/mathjax/MathJax.js?config=default">
+  </script>
+  -->
+  <script src="http://www.w3.org/Talks/Tools/Slidy2/scripts/slidy.js.gz"
+    charset="utf-8" type="text/javascript"></script>
+</head>
+<body>
+<div class="section slide level1" id="fast-code-nation">
+<h1>Fast Code Nation</h1>
+<p>Bryan O’Sullivan</p>
+<p>Facebook</p>
+</div>
+<div class="section slide level1" id="a-little-bit-about-me">
+<h1>A little bit about me</h1>
+<p>My background is a little bit all over the place:</p>
+<ul>
+<li><p>Distributed systems</p></li>
+<li><p>High performance computing</p></li>
+<li><p>Linux kernel hacking</p></li>
+<li><p>Compilers and language runtimes</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="why-performance">
+<h1>Why performance?</h1>
+<p>Call it a combination of outlook and personality quirk.</p>
+<ul>
+<li><p>I like to develop my software quickly.</p></li>
+<li><p>But I also like that software to be <em>fast</em>.</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="performancebut-when">
+<h1>Performance—but when?</h1>
+<p>I often work on software where speed really matters.</p>
+<p>Interactive tools</p>
+<ul>
+<li><em>Don’t make your users wait!</em></li>
+</ul>
+<p>Components that other people depend on</p>
+<ul>
+<li><em>Don’t constrain how people use your libraries</em></li>
+</ul>
+</div>
+<div class="section slide level1" id="interactive-tools">
+<h1>Interactive tools</h1>
+<p>Back in 2005, I started working on a DVCS:</p>
+<ul>
+<li>Mercurial</li>
+</ul>
+<p>Although written in Python:</p>
+<ul>
+<li>It’s <em>fast</em>—competitive with git</li>
+</ul>
+</div>
+<div class="section slide level1" id="an-example-from-the-early-days-of-mercurial">
+<h1>An example from the early days of Mercurial</h1>
+<p>The <code>log</code> command displays history in reverse.</p>
+<p>Two common use cases:</p>
+<ul>
+<li><p>I just want to look at the last few changes</p></li>
+<li><p>I’m searching through history for something</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="latency-vs-throughput">
+<h1>Latency vs throughput</h1>
+<p>Low latency:</p>
+<ul>
+<li><p>I want (parts of) an answer quickly</p></li>
+<li><p>“I just want to look at the last few changes”</p></li>
+</ul>
+<p>High throughput:</p>
+<ul>
+<li><p>I want as much data per unit time as possible</p></li>
+<li><p>“I’m searching through history for something”</p></li>
+</ul>
+<p>Problem?</p>
+</div>
+<div class="section slide level1" id="where-we-started">
+<h1>Where we started</h1>
+<p>The original version of <code>hg log</code>:</p>
+<ul>
+<li><p>Walked history backwards</p></li>
+<li><p>One rev at a time</p></li>
+</ul>
+<p>How did this behave?</p>
+<ul>
+<li><p>Displayed the first few revs quickly</p></li>
+<li><p>Was <em>incredibly slow</em> at retrieving all revs</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="why">
+<h1>Why?</h1>
+<p>Filesystems optimize for one access pattern:</p>
+<ul>
+<li><em>Forwards</em>, from beginning to end</li>
+</ul>
+<p>Seeking backwards a little at a time?</p>
+<ul>
+<li>It works, but is <em>terribly</em> slow</li>
+</ul>
+</div>
+<div class="section slide level1" id="one-fix">
+<h1>One “fix”</h1>
+<p>Force the poor user to tell us what they want!</p>
+<pre><code>hg log --limit 5</code></pre>
+<p>Problem:</p>
+<ul>
+<li>I often don’t know how many revs I want to look at!</li>
+</ul>
+<p>Very common usage:</p>
+<pre><code>hg log | less</code></pre>
+</div>
+<div class="section slide level1" id="perverting-the-usage-pattern">
+<h1>Perverting the usage pattern</h1>
+<p>These characteristics forced users to plan for how to get best performance</p>
+<p>For “I just need a few recent revs”:</p>
+<ul>
+<li>View in reverse order, as usual</li>
+</ul>
+<p>For “I need to bulk search”:</p>
+<ul>
+<li>Ask for <em>forward</em> order</li>
+</ul>
+<p><strong>Yuck!</strong></p>
+</div>
+<div class="section slide level1" id="a-step-on-the-road">
+<h1>A step on the road</h1>
+<p>Instead of reading one rev at a time, backwards:</p>
+<p>Use a <em>windowed</em> approach!</p>
+<ul>
+<li><p>Jump back \(n\) revs</p></li>
+<li><p>Read a window of \(n\) revs <em>forwards</em></p></li>
+<li><p>Present these in reverse order</p></li>
+<li><p>Repeat as necessary</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="how-did-this-fare">
+<h1>How did this fare?</h1>
+<p>Reduced frequency of backwards seeks by \(n\) times</p>
+<ul>
+<li><p>Bulk throughput got better</p></li>
+<li><p>Latency for retrieving the first few revs got <em>worse</em></p></li>
+</ul>
+<p>Not good enough!</p>
+</div>
+<div class="section slide level1" id="a-refinement">
+<h1>A refinement</h1>
+<p>Start with a tiny window</p>
+<p>Repeatedly double the window size as more revs requested</p>
+</div>
+<div class="section slide level1" id="results">
+<h1>Results?</h1>
+<p>Instant response for small requests</p>
+<p>What about bulk throughput?</p>
+<ul>
+<li>Iterating backwards and forwards became <em>indistinguishable</em></li>
+</ul>
+<p>Hooray!</p>
+</div>
+<div class="section slide level1" id="and-my-point-is">
+<h1>And my point is?</h1>
+<p>Much (<em>but not all</em>) of the time:</p>
+<ul>
+<li>The big-picture details are what count</li>
+</ul>
+<p>My <code>hg log</code> story would play out the same way in any programming language</p>
+</div>
+<div class="section slide level1" id="how-i-spend-my-time">
+<h1>How I spend my time</h1>
+<p>I spend way too much of my time paying attention to performance issues!</p>
+<p>Current job (Facebook):</p>
+<ul>
+<li>Make a big interactive Python app fast on huge data sets</li>
+</ul>
+<p>Previous job (company I founded):</p>
+<ul>
+<li>Make a big interactive Haskell app fast on huge data sets</li>
+</ul>
+</div>
+<div class="section slide level1" id="measure-once">
+<h1>Measure once</h1>
+<p>CPython has so-so performance analysis support</p>
+<p>Its <code>cProfile</code> module measures every function call</p>
+<ul>
+<li>Measurements are expensive enough to distort performance</li>
+</ul>
+<p>Even worse:</p>
+<ul>
+<li>We find out nothing about what code <em>inside</em> a function is costly</li>
+</ul>
+</div>
+<div class="section slide level1" id="measure-twice">
+<h1>Measure twice</h1>
+<p>The <code>statprof</code> profiler captures a stack trace periodically</p>
+<ul>
+<li><p>Very low overhead</p></li>
+<li><p>Tells us about hot spots <em>inside</em> functions</p></li>
+<li><p>Not accurate on short lived programs</p></li>
+<li><p>Call-outs to C code delay sample collection</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="measure-thrice">
+<h1>Measure … thrice?</h1>
+<p>“Poor man’s profiling”</p>
+<ul>
+<li><p>Attach <code>gdb</code> to a Python process</p></li>
+<li><p>Interrupt and capture a stack periodically</p></li>
+<li><p>Modern <code>gdb</code> can decode both C and Python stacks</p></li>
+</ul>
+<p>Pain in the ass, high overhead, <em>but</em> greatest insight</p>
+</div>
+<div class="section slide level1" id="if-performance-matters">
+<h1>If performance matters …</h1>
+<p>If performance is important to you, <em>build support into your app</em></p>
+<p>Mercurial makes measuring really easy:</p>
+<ul>
+<li><p>Run with <code>--time</code> to measure wall clock execution time</p></li>
+<li><p>Use <code>--profile</code> to get a <code>cProfile</code> breakdown</p></li>
+<li><p>Set <code>HGPROF=stat</code> before <code>--profile</code> for a <code>statprof</code> profile</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="what-measurements-tell-us">
+<h1>What measurements tell us</h1>
+<p>Before we pull out the big guns of “rewrite it in C!” …</p>
+<p>How can we improve the performance of code under CPython?</p>
+<ul>
+<li>Obviously, we measure before and after!</li>
+</ul>
+</div>
+<div class="section slide level1" id="whats-in-a-name">
+<h1>What’s in a name?</h1>
+<p>In CPython, most name lookups are expensive</p>
+<p>For example, even in a process that is mostly network- and IO-bound, this transformation makes for a 3% speedup:</p>
+<pre class="sourceCode diff"><code class="sourceCode diff">     def sendstream(self, source):
+<span class="ot">+        write = self.fout.write</span>
+         for chunk in source.gen:
+<span class="st">-            self.fout.write(chunk)</span>
+<span class="ot">+            write(chunk)</span>
+         self.fout.flush()</code></pre>
+</div>
+<div class="section slide level1" id="wait-what">
+<h1>Wait, what?</h1>
+<p>What’s this even <em>doing</em>?</p>
+<pre class="sourceCode diff"><code class="sourceCode diff">     def sendstream(self, source):
+<span class="ot">+        write = self.fout.write</span>
+         for chunk in source.gen:
+<span class="st">-            self.fout.write(chunk)</span>
+<span class="ot">+            write(chunk)</span>
+         self.fout.flush()</code></pre>
+<ul>
+<li><p>Look up the name <code>self.fout.write</code> just once</p></li>
+<li><p>Hoist this expensive lookup out of the loop</p></li>
+<li><p>Replace it with a local variable lookup</p></li>
+</ul>
+<p>Even shortish chains of dots are expensive!</p>
+</div>
+<div class="section slide level1" id="scary-features">
+<h1>Scary features</h1>
+<p>In fact, if you really need top performance out of CPython:</p>
+<ul>
+<li>There are quite a few language features you can avoid</li>
+</ul>
+</div>
+<div class="section slide level1" id="nested-functions">
+<h1>Nested functions</h1>
+<p>Why are nested functions expensive?</p>
+<pre class="sourceCode python"><code class="sourceCode python"><span class="kw">def</span> foo():
+    <span class="kw">def</span> bar():
+        wat()</code></pre>
+<p>When resolving a name, a normal function:</p>
+<ul>
+<li>Searches its own environment and its module</li>
+</ul>
+<p>A nested function:</p>
+<ul>
+<li>Must search <em>all</em> of its enclosing environments</li>
+</ul>
+</div>
+<div class="section slide level1" id="classes-with-deep-hierarchies">
+<h1>Classes with deep hierarchies</h1>
+<p>Why are classes with deep hierarchies expensive?</p>
+<ul>
+<li><p>They build up long chains of <code>dict</code>s to search</p></li>
+<li><p>If you use it, the <code>super</code> keyword is costly (!)</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="precompute-stuff-where-possible">
+<h1>Precompute stuff where possible</h1>
+<p>Here, we reduce the number of string concatenations in a heavily used method:</p>
+<pre class="sourceCode diff"><code class="sourceCode diff">     def __init__(self, path, openertype, encode):
+         self.encode = encode
+         self.path = path + &#39;/store&#39;
+<span class="ot">+        self.pathsep = self.path + &#39;/&#39;</span>
+
+     def join(self, f):
+<span class="st">-        return self.path + &#39;/&#39; + self.encode(f)</span>
+<span class="ot">+        return self.pathsep + self.encode(f)</span></code></pre>
+</div>
+<div class="section slide level1" id="generators-are-good">
+<h1>Generators are good!</h1>
+<p>A lovely pattern for reading a file in manageable chunks:</p>
+<pre class="sourceCode python"><code class="sourceCode python"><span class="kw">for</span> chunk in util.filechunkiter(<span class="dt">open</span>(name), limit=size):
+    <span class="kw">yield</span> chunk</code></pre>
+</div>
+<div class="section slide level1" id="generators-are-bad">
+<h1>Generators are bad!</h1>
+<p>This code is 10% faster by avoiding the <code>filechunkiter</code> in the common case of small files:</p>
+<pre class="sourceCode python"><code class="sourceCode python"><span class="kw">if</span> size &lt;= <span class="dv">65536</span>:
+    <span class="kw">yield</span> <span class="dt">open</span>(name).read(size)
+<span class="kw">else</span>:
+    <span class="kw">for</span> chunk in util.filechunkiter(<span class="dt">open</span>(name), limit=size):
+        <span class="kw">yield</span> chunk</code></pre>
+</div>
+<div class="section slide level1" id="the-bottom-line">
+<h1>The bottom line</h1>
+<p>In Python, almost <em>every</em> abstraction you use to make your code more readable will hurt its performance.</p>
+<ul>
+<li><p>Function calls</p></li>
+<li><p>Classes of any sort</p></li>
+<li><p>Generators</p></li>
+<li><p>etc, etc</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="so-what-to-do">
+<h1>So what to do?</h1>
+<p>Ultimately, we get the best performance out of Python by relying on C</p>
+<ul>
+<li>Know which functions/methods are written in C</li>
+</ul>
+<p>Find ways to make use of this</p>
+<ul>
+<li><p>Cheap: transform a string in one pass, then split</p></li>
+<li><p>Costly: split string, then transform parts</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="even-scarier">
+<h1>Even scarier</h1>
+<p>Dropping down into C is hard</p>
+<ul>
+<li><p>Manual reference counting is painful</p></li>
+<li><p>The usual C risks: bugs turn into corruption or crashes</p></li>
+<li><p>5x longer development cycles, code much harder to review</p></li>
+</ul>
+<p>Alternatives (Cython, boost::python) are heavyweight and meh</p>
+</div>
+<div class="section slide level1" id="performance-in-haskell">
+<h1>Performance in Haskell</h1>
+<p>The very first thing people find in Haskell when they care about performance:</p>
+<ul>
+<li>“I’m trying to process a text file, and it’s <em>really slow</em>!”</li>
+</ul>
+<p>Uh oh.</p>
+</div>
+<div class="section slide level1" id="a-little-history">
+<h1>A little history</h1>
+<p>The built-in <code>String</code> datatype in Haskell is really just a singly linked list</p>
+<p>Why?</p>
+<p>Lists are famously easy to <em>reason</em> about</p>
+<p>A list is either:</p>
+<ul>
+<li><p>Empty</p></li>
+<li><p>A single item, followed by the rest of the list</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="trouble-in-paradise">
+<h1>Trouble in paradise</h1>
+<p>Our problem is <em>pointer chasing</em>:</p>
+<ul>
+<li><p>Every link in a list is allocated separately</p></li>
+<li><p>Each value pointed to by a link is allocated separately</p></li>
+</ul>
+<p>There’s a ton of costly overhead associated with lists</p>
+<ul>
+<li>And hence with strings</li>
+</ul>
+</div>
+<div class="section slide level1" id="what-did-we-do-about-this">
+<h1>What did we do about this?</h1>
+<p>The poor performance of strings was recognised early on</p>
+<ul>
+<li><p>I developed a <code>PackedString</code> type in 1993</p></li>
+<li><p>A packed array of bytes, nice and compact</p></li>
+</ul>
+<p>The <code>String</code> type stays on, as a great teaching tool</p>
+</div>
+<div class="section slide level1" id="was-that-it">
+<h1>Was that it?</h1>
+<p>The <code>PackedString</code> type got a huge overhaul in the mid-2000s</p>
+<ul>
+<li><p>New <code>ByteString</code> type still a packed array of bytes</p></li>
+<li><p>Great for binary data, but …</p></li>
+<li><p>… useless for modern text processing</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="fast-forward-some-more">
+<h1>Fast forward some more</h1>
+<p>The modern Haskell type for working with Unicode text is named <code>Text</code></p>
+<p>Uses some of Haskell’s key features:</p>
+<ul>
+<li><p>Data is immutable</p></li>
+<li><p>Functions never change behaviour</p></li>
+</ul>
+<p>Also has a really nice API</p>
+</div>
+<div class="section slide level1" id="programming-with-pipelines">
+<h1>Programming with pipelines</h1>
+<p>In Haskell, we often manipulate text using right-to-left function pipelines:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">length</span> <span class="fu">.</span> <span class="fu">toUpper</span> <span class="fu">.</span> <span class="fu">dropWhile</span> <span class="fu">isSpace</span></code></pre>
+<p>Naively, this has quite a cost</p>
+</div>
+<div class="section slide level1" id="wait-what-cost">
+<h1>Wait, what cost?</h1>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">length</span> <span class="fu">.</span> <span class="fu">toUpper</span> <span class="fu">.</span> <span class="fu">dropWhile</span> <span class="fu">isSpace</span></code></pre>
+<p>Most stages of our pipeline create new <code>Text</code> strings:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">dropWhile</span> <span class="fu">isSpace</span></code></pre>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">toUpper</span></code></pre>
+<p>Yuck!</p>
+</div>
+<div class="section slide level1" id="what-is-to-be-done">
+<h1>What is to be done?</h1>
+<p>GHC is a powerful compiler</p>
+<ul>
+<li>Really good at inlining and program transformation</li>
+</ul>
+<p>Its job is made easier by those key features:</p>
+<ul>
+<li><p>Data is immutable</p></li>
+<li><p>Functions never change behaviour</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="but">
+<h1>But …</h1>
+<p>There’s a problem:</p>
+<ul>
+<li><p>In Haskell, instead of loops, we write recursive functions</p></li>
+<li><p>The building blocks of our pipeline are recursive functions</p></li>
+<li><p>A compiler cannot safely inline recursive functions!</p></li>
+</ul>
+<p>Very few options for improvement here</p>
+</div>
+<div class="section slide level1" id="lets-change-the-game">
+<h1>Let’s change the game</h1>
+<p>Instead of processing text directly, let’s process <em>streams</em></p>
+<p>A stream is:</p>
+<ul>
+<li><p>A generic piece of state</p></li>
+<li><p>A state transformer (“step”) function</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="whats-a-state-transformer">
+<h1>What’s a state transformer?</h1>
+<p>A state transformer:</p>
+<ul>
+<li><p>Consumes a state</p></li>
+<li><p>Returns a new state and a value</p></li>
+</ul>
+<p>Importantly:</p>
+<ul>
+<li><p>State transformers are <em>not</em> recursive</p></li>
+<li><p>Candidates for inlining</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="pipeline-transformation">
+<h1>Pipeline transformation</h1>
+<p>Our original pipeline:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">length</span> <span class="fu">.</span> <span class="fu">toUpper</span> <span class="fu">.</span> <span class="fu">dropWhile</span> <span class="fu">isSpace</span></code></pre>
+<p>Here’s how each function is implemented in the <code>text</code> library:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell">Stream.toText <span class="fu">.</span> Stream.dropWhile <span class="fu">isSpace</span> <span class="fu">.</span> Stream.fromText</code></pre>
+<pre class="sourceCode haskell"><code class="sourceCode haskell">Stream.toText <span class="fu">.</span> Stream.toUpper <span class="fu">.</span> Stream.fromText</code></pre>
+<pre class="sourceCode haskell"><code class="sourceCode haskell">Stream.length <span class="fu">.</span> Stream.fromText</code></pre>
+</div>
+<div class="section slide level1" id="glue-them-together">
+<h1>Glue them together</h1>
+<p>Our original pipeline:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="fu">length</span> <span class="fu">.</span> <span class="fu">toUpper</span> <span class="fu">.</span> <span class="fu">dropWhile</span> <span class="fu">isSpace</span></code></pre>
+<p>Our pipeline with a tiny bit of inlining:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell">Stream.length <span class="fu">.</span>
+Stream.fromText <span class="fu">.</span> Stream.toText <span class="co">{- &lt;&lt;-- -}</span> <span class="fu">.</span>
+Stream.toUpper <span class="fu">.</span>
+Stream.fromText <span class="fu">.</span> Stream.toText <span class="co">{- &lt;&lt;-- -}</span> <span class="fu">.</span>
+Stream.dropWhile <span class="fu">isSpace</span> <span class="fu">.</span>
+Stream.fromText</code></pre>
+<p>I’ve highlighted a few “do-nothing” transforms above. Why?</p>
+</div>
+<div class="section slide level1" id="a-nice-item-in-ghcs-toolbox">
+<h1>A nice item in GHC’s toolbox</h1>
+<p>Making use of these language features:</p>
+<ul>
+<li><p>Data is immutable</p></li>
+<li><p>Functions never change behaviour</p></li>
+</ul>
+<p>GHC exposes a <em>rule-driven rewrite system</em> to programmers:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell"><span class="co">{-# RULES &quot;drop fromText/toText&quot;</span>
+
+<span class="co">Stream.fromText (Stream.toText t) = t</span>
+
+<span class="co">#-}</span></code></pre>
+<p>“If you see the code on the left, replace it with the code on the right.”</p>
+</div>
+<div class="section slide level1" id="ooh">
+<h1>Ooh!</h1>
+<p>Our rewrite rule causes GHC to transform our pipeline into something simpler:</p>
+<pre class="sourceCode haskell"><code class="sourceCode haskell">Stream.length <span class="fu">.</span>
+Stream.toUpper <span class="fu">.</span>
+Stream.dropWhile <span class="fu">isSpace</span> <span class="fu">.</span>
+Stream.fromText</code></pre>
+<p>What’s important about this?</p>
+<ul>
+<li><p>These functions are all written as state transformers</p></li>
+<li><p>None of them is recursive</p></li>
+<li><p>They can <em>all</em> be inlined</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="stream-fusion">
+<h1>Stream fusion</h1>
+<p>This approach is called <em>stream fusion</em>.</p>
+<p>Starting from an expensive looking pipeline of functions:</p>
+<ul>
+<li><p>GHC will fuse our code into a single loop</p></li>
+<li><p>That loop will allocate no memory</p></li>
+<li><p>Runs about as fast as hand-written C</p></li>
+</ul>
+</div>
+<div class="section slide level1" id="how-to-use-stream-fusion">
+<h1>How to use stream fusion</h1>
+<p>Built into in the <code>text</code> and <code>vector</code> libraries</p>
+<ul>
+<li>Users of these libraries benefit “for free”</li>
+</ul>
+<p>The only “special” tricks required of users?</p>
+<ul>
+<li><p>Compile with <code>-O2</code></p></li>
+<li><p>For an extra boost, use the LLVM back end (<code>-fllvm</code>)</p></li>
+</ul>
+<p>Easy, right?</p>
+</div>
+<div class="section slide level1" id="why-does-stream-fusion-work">
+<h1>Why does stream fusion work?</h1>
+<p>Haskell’s powerful type system</p>
+<ul>
+<li><p>Lets GHC (and us!) tell when code can be aggressively transformed</p></li>
+<li><p>Segregates impure, unsafe code that deals with the outside world</p></li>
+</ul>
+<p>Immutable data</p>
+<ul>
+<li>Doesn’t change, easy to reason about</li>
+</ul>
+<p>Predictable functions</p>
+<ul>
+<li>Not affected by hidden mutable state</li>
+</ul>
+</div>
+<div class="section slide level1" id="compare-and-contrast">
+<h1>Compare and contrast</h1>
+<p>Need some speed?</p>
+<p>Python:</p>
+<ul>
+<li><p>Use <em>fewer</em> abstractions</p></li>
+<li><p>Take more risks in dangerous languages</p></li>
+</ul>
+<p>Haskell:</p>
+<ul>
+<li><p>Choose <em>smart</em> abstractions</p></li>
+<li><p>Make the compiler do the hard work</p></li>
+</ul>
+</div>
+</body>
+</html>
